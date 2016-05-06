@@ -19,6 +19,9 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"io/ioutil"
+	"os"
+	"strings"
 	"testing"
 )
 
@@ -215,6 +218,69 @@ func testObjectAPIPutObjectPart(obj ObjectLayer, instanceType string, t *testing
 			// Asserting whether the md5 output is correct.
 			if testCase.inputMd5 != actualMd5Hex {
 				t.Errorf("Test %d: %s: Calculated Md5 different from the actual one %s.", i+1, instanceType, actualMd5Hex)
+			}
+		}
+	}
+}
+
+// Wrapper for calling ListMultipartUploads tests for both XL muliple disks and single node setup.
+// TestListMultipartUploads - Tests validate listing of multipart uploads.
+func TestListMultipartUploads(t *testing.T) {
+	// getSingleNodeObjectLayer - Instantiates single node object layer and retuns it.
+	getSingleNodeObjectLayer := func() (ObjectLayer, string, error) {
+		// Make a temporary directory to use as the obj.
+		fsDir, err := ioutil.TempDir("", "minio-")
+		if err != nil {
+			return nil, "", err
+		}
+
+		// Create the obj.
+		objLayer, err := newFSObjects(fsDir)
+		if err != nil {
+			return nil, "", err
+		}
+		return objLayer, fsDir, nil
+	}
+
+	obj, dir, err := getSingleNodeObjectLayer()
+	if err != nil {
+		panic(err)
+	}
+	defer os.RemoveAll(dir)
+	testCases := []struct {
+		// Inputs to ListObjects.
+		bucket         string
+		prefix         string
+		keyMarker      string
+		uploadIDMarker string
+		delimiter      string
+		maxUploads     int
+		// Expected output of ListObjects.
+		expectedResult ListMultipartsInfo
+		expectedErr    error
+		// Flag indicating whether the test is expected to pass or not.
+		shouldPass bool
+	}{
+		// Test cases with invalid bucket names ( Test number 1-4 ).
+		{".test", "", "", "", "", 0, ListMultipartsInfo{}, BucketNameInvalid{Bucket: ".test"}, false},
+		{"Test", "", "", "", "", 0, ListMultipartsInfo{}, BucketNameInvalid{Bucket: "Test"}, false},
+		{"---", "", "", "", "", 0, ListMultipartsInfo{}, BucketNameInvalid{Bucket: "---"}, false},
+		{"ad", "", "", "", "", 0, ListMultipartsInfo{}, BucketNameInvalid{Bucket: "ad"}, false},
+	}
+
+	for i, testCase := range testCases {
+		fmt.Println("here: " + testCase.bucket)
+		_, actualErr := obj.ListMultipartUploads(testCase.bucket, testCase.prefix, testCase.keyMarker, testCase.uploadIDMarker, testCase.delimiter, testCase.maxUploads)
+		if actualErr != nil && testCase.shouldPass {
+			t.Errorf("Test %d: Expected to pass, but failed with: <ERROR> %s", i+1, actualErr.Error())
+		}
+		if actualErr == nil && !testCase.shouldPass {
+			t.Errorf("Test %d: Expected to fail with <ERROR> \"%s\", but passed instead", i+1, testCase.expectedErr.Error())
+		}
+		// Failed as expected, but does it fail for the expected reason.
+		if actualErr != nil && !testCase.shouldPass {
+			if !strings.Contains(actualErr.Error(), testCase.expectedErr.Error()) {
+				t.Errorf("Test %d: Expected to fail with error \"%s\", but instead failed with error \"%s\" instead", i+1, testCase.expectedErr.Error(), actualErr.Error())
 			}
 		}
 	}
