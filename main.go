@@ -23,6 +23,8 @@ import (
 	"sort"
 	"strconv"
 
+	"github.com/davecheney/profile"
+
 	"github.com/dustin/go-humanize"
 	"github.com/minio/cli"
 	"github.com/minio/mc/pkg/console"
@@ -177,6 +179,17 @@ func checkMainSyntax(c *cli.Context) {
 }
 
 func main() {
+
+	// configuring the profiler.
+	cfg := profile.Config{
+		CPUProfile: true,
+		// NoShutdownHook: true, // do not hook SIGINT
+	}
+
+	// starting the profiler.
+	p := profile.Start(&cfg)
+	defer p.Stop()
+
 	probe.Init() // Set project's root source path.
 	probe.SetAppInfo("Release-Tag", minioReleaseTag)
 	probe.SetAppInfo("Commit-ID", minioShortCommitID)
