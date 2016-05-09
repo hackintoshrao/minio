@@ -360,6 +360,25 @@ func listMultipartUploadsCommon(layer ObjectLayer, bucket, prefix, keyMarker, up
 	if !IsValidObjectPrefix(prefix) {
 		return ListMultipartsInfo{}, ObjectNameInvalid{Bucket: bucket, Object: prefix}
 	}
+
+	switch v := layer.(type) {
+	case fsObjects:
+		// Verify whether the bucket exists.
+		if isExist, err := isBucketExist(v.storage, bucket); err != nil {
+			return ListMultipartsInfo{}, err
+		} else if !isExist {
+			return ListMultipartsInfo{}, BucketNotFound{Bucket: bucket}
+		}
+	case xlObjects:
+		// Verify whether the bucket exists.
+		if isExist, err := isBucketExist(v.storage, bucket); err != nil {
+			return ListMultipartsInfo{}, err
+		} else if !isExist {
+			return ListMultipartsInfo{}, BucketNotFound{Bucket: bucket}
+		}
+
+	}
+
 	// Verify if delimiter is anything other than '/', which we do not support.
 	if delimiter != "" && delimiter != slashSeparator {
 		return ListMultipartsInfo{}, UnsupportedDelimiter{
@@ -373,6 +392,8 @@ func listMultipartUploadsCommon(layer ObjectLayer, bucket, prefix, keyMarker, up
 			Prefix: prefix,
 		}
 	}
+	// UploadIDMarker is not empty means that the keyMarker is an object (i.e full path, not a directory that
+	// ends with /) hence it's a check that makes sure that the keyMarker does not end with / .
 	if uploadIDMarker != "" {
 		if strings.HasSuffix(keyMarker, slashSeparator) {
 			return result, InvalidUploadIDKeyCombination{

@@ -246,6 +246,11 @@ func TestListMultipartUploads(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
+	// This bucket is used for testing ListObject operations.
+	err = obj.MakeBucket("test-bucket-list-nultipart")
+	if err != nil {
+		t.Fatalf("%s : ", err.Error())
+	}
 	defer os.RemoveAll(dir)
 	testCases := []struct {
 		// Inputs to ListObjects.
@@ -266,6 +271,26 @@ func TestListMultipartUploads(t *testing.T) {
 		{"Test", "", "", "", "", 0, ListMultipartsInfo{}, BucketNameInvalid{Bucket: "Test"}, false},
 		{"---", "", "", "", "", 0, ListMultipartsInfo{}, BucketNameInvalid{Bucket: "---"}, false},
 		{"ad", "", "", "", "", 0, ListMultipartsInfo{}, BucketNameInvalid{Bucket: "ad"}, false},
+		// Valid bucket names, but they donot exist (6-8).
+		{"volatile-bucket-1", "", "", "", "", 0, ListMultipartsInfo{}, BucketNotFound{Bucket: "volatile-bucket-1"}, false},
+		{"volatile-bucket-2", "", "", "", "", 0, ListMultipartsInfo{}, BucketNotFound{Bucket: "volatile-bucket-2"}, false},
+		{"volatile-bucket-3", "", "", "", "", 0, ListMultipartsInfo{}, BucketNotFound{Bucket: "volatile-bucket-3"}, false},
+		// Valid, existing bucket, but sending invalid delimeter values (9-10).
+		// Empty string < "" > and forward slash < / > are the ony two valid arguments for delimeter.
+		{"test-bucket-list-nultipart", "", "", "", "*", 0, ListMultipartsInfo{}, fmt.Errorf("delimiter '%s' is not supported", "*"), false},
+		{"test-bucket-list-nultipart", "", "", "", "-", 0, ListMultipartsInfo{}, fmt.Errorf("delimiter '%s' is not supported", "-"), false},
+		// Testing for failure cases with both perfix and marker (13).
+		// The prefix and marker combination to be valid it should satisy strings.HasPrefix(marker, prefix).
+		{"test-bucket-list-nultipart", "asia", "europe-object", "", "", 0, ListMultipartsInfo{},
+			fmt.Errorf("Invalid combination of marker '%s' and prefix '%s'", "europe-object", "asia"), false},
+		// Setting a non-existing directory to be prefix (14-15).
+		{"test-bucket-list-nultipart", "asia", "europe-object", "", "", 0, ListMultipartsInfo{},
+			fmt.Errorf("Invalid combination of marker '%s' and prefix '%s'", "europe-object", "asia"), false},
+		// Setting a non-existing directory to be prefix (14-15).
+		{"test-bucket-list-nultipart", "asia", "asia/europe/", "abc", "", 0, ListMultipartsInfo{},
+			fmt.Errorf("Invalid combination of uploadID marker '%s' and marker '%s'", "abc", "asia/europe/"), false},
+		{"test-bucket-list-nultipart", "asia", "asia/europe", "abc", "", 0, ListMultipartsInfo{},
+			fmt.Errorf("unknown UUID string %s", "abc"), false},
 	}
 
 	for i, testCase := range testCases {
