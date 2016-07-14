@@ -64,6 +64,8 @@ func configureServerHandler(srvCmdConfig serverCmdConfig) http.Handler {
 	registerStorageRPCRouter(mux, storageRPC)
 	registerWebRouter(mux, webHandlers)
 	registerAPIRouter(mux, apiHandlers)
+	// registering routes for debug/instrumentation related information.
+	registerDebugRouter(mux)
 	// Add new routers here.
 
 	// List of some generic handlers which are applied for all

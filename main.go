@@ -63,6 +63,7 @@ func init() {
 
 	// Set global trace flag.
 	globalTrace = os.Getenv("MINIO_TRACE") == "1"
+
 }
 
 func migrate() {

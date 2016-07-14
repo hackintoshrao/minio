@@ -56,9 +56,13 @@ func (xl xlObjects) GetObject(bucket, object string, startOffset int64, length i
 	if writer == nil {
 		return toObjectErr(errUnexpected, bucket, object)
 	}
+	// generates random string on setting MINIO_DEBUG=lock, else returns empty string.
+	// used for instrumentation on locks.
+	opsID := getOpsID()
+
 	// Lock the object before reading.
-	nsMutex.RLock(bucket, object)
-	defer nsMutex.RUnlock(bucket, object)
+	nsMutex.RLock(bucket, object, opsID)
+	defer nsMutex.RUnlock(bucket, object, opsID)
 
 	// Read metadata associated with the object from all disks.
 	metaArr, errs := readAllXLMetadata(xl.storageDisks, bucket, object)
@@ -206,8 +210,13 @@ func (xl xlObjects) GetObjectInfo(bucket, object string) (ObjectInfo, error) {
 	if !IsValidObjectName(object) {
 		return ObjectInfo{}, ObjectNameInvalid{Bucket: bucket, Object: object}
 	}
-	nsMutex.RLock(bucket, object)
-	defer nsMutex.RUnlock(bucket, object)
+
+	// generates random string on setting MINIO_DEBUG=lock, else returns empty string.
+	// used for instrumentation on locks.
+	opsID := getOpsID()
+
+	nsMutex.RLock(bucket, object, opsID)
+	defer nsMutex.RUnlock(bucket, object, opsID)
 	info, err := xl.getObjectInfo(bucket, object)
 	if err != nil {
 		return ObjectInfo{}, toObjectErr(err, bucket, object)
@@ -464,9 +473,13 @@ func (xl xlObjects) PutObject(bucket string, object string, size int64, data io.
 		}
 	}
 
+	// generates random string on setting MINIO_DEBUG=lock, else returns empty string.
+	// used for instrumentation on locks.
+	opsID := getOpsID()
+
 	// Lock the object.
-	nsMutex.Lock(bucket, object)
-	defer nsMutex.Unlock(bucket, object)
+	nsMutex.Lock(bucket, object, opsID)
+	defer nsMutex.Unlock(bucket, object, opsID)
 
 	// Check if an object is present as one of the parent dir.
 	// -- FIXME. (needs a new kind of lock).
@@ -572,8 +585,12 @@ func (xl xlObjects) DeleteObject(bucket, object string) (err error) {
 	if !IsValidObjectName(object) {
 		return ObjectNameInvalid{Bucket: bucket, Object: object}
 	}
-	nsMutex.Lock(bucket, object)
-	defer nsMutex.Unlock(bucket, object)
+	// generates random string on setting MINIO_DEBUG=lock, else returns empty string.
+	// used for instrumentation on locks.
+	opsID := getOpsID()
+
+	nsMutex.Lock(bucket, object, opsID)
+	defer nsMutex.Unlock(bucket, object, opsID)
 
 	// Validate object exists.
 	if !xl.isObject(bucket, object) {

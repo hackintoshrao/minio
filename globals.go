@@ -19,6 +19,7 @@ package main
 import (
 	"github.com/fatih/color"
 	"github.com/minio/minio/pkg/objcache"
+	"os"
 )
 
 // Global constants for Minio.
@@ -39,8 +40,9 @@ const (
 )
 
 var (
-	globalQuiet = false // Quiet flag set via command line
-	globalTrace = false // Trace flag set via environment setting.
+	globalQuiet     = false // Quiet flag set via command line
+	globalTrace     = false // Trace flag set via environment setting.
+	globalLockDebug = false // Lock debug info set via environment var MINIO_DEBUG=lock .
 	// Add new global flags here.
 
 	// Maximum connections handled per
@@ -60,3 +62,11 @@ var (
 	colorBlue      = color.New(color.FgBlue).SprintfFunc()
 	colorBold      = color.New(color.Bold).SprintFunc()
 )
+
+// fetch from environment variables and set the global values related to locks.
+func setGlobalsDebugFromEnv() {
+	switch os.Getenv("MINIO_DEBUG") {
+	case "lock":
+		globalLockDebug = true
+	}
+}

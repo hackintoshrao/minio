@@ -22,10 +22,10 @@ import "testing"
 func TestNamespaceLockTest(t *testing.T) {
 	// List of test cases.
 	testCases := []struct {
-		lk               func(s1, s2 string)
-		unlk             func(s1, s2 string)
-		rlk              func(s1, s2 string)
-		runlk            func(s1, s2 string)
+		lk               func(s1, s2, s3 string)
+		unlk             func(s1, s2, s3 string)
+		rlk              func(s1, s2, s3 string)
+		runlk            func(s1, s2, s3 string)
 		lkCount          int
 		lockedRefCount   uint
 		unlockedRefCount uint
@@ -58,7 +58,7 @@ func TestNamespaceLockTest(t *testing.T) {
 
 	// Write lock tests.
 	testCase := testCases[0]
-	testCase.lk("a", "b") // lock once.
+	testCase.lk("a", "b", "c") // lock once.
 	nsLk, ok := nsMutex.lockMap[nsParam{"a", "b"}]
 	if !ok && testCase.shouldPass {
 		t.Errorf("Lock in map missing.")
@@ -67,7 +67,7 @@ func TestNamespaceLockTest(t *testing.T) {
 	if testCase.lockedRefCount != nsLk.ref && testCase.shouldPass {
 		t.Errorf("Test %d fails, expected to pass. Wanted ref count is %d, got %d", 1, testCase.lockedRefCount, nsLk.ref)
 	}
-	testCase.unlk("a", "b") // unlock once.
+	testCase.unlk("a", "b", "c") // unlock once.
 	if testCase.unlockedRefCount != nsLk.ref && testCase.shouldPass {
 		t.Errorf("Test %d fails, expected to pass. Wanted ref count is %d, got %d", 1, testCase.unlockedRefCount, nsLk.ref)
 	}
@@ -78,10 +78,10 @@ func TestNamespaceLockTest(t *testing.T) {
 
 	// Read lock tests.
 	testCase = testCases[1]
-	testCase.rlk("a", "b") // lock once.
-	testCase.rlk("a", "b") // lock second time.
-	testCase.rlk("a", "b") // lock third time.
-	testCase.rlk("a", "b") // lock fourth time.
+	testCase.rlk("a", "b", "c") // lock once.
+	testCase.rlk("a", "b", "c") // lock second time.
+	testCase.rlk("a", "b", "c") // lock third time.
+	testCase.rlk("a", "b", "c") // lock fourth time.
 	nsLk, ok = nsMutex.lockMap[nsParam{"a", "b"}]
 	if !ok && testCase.shouldPass {
 		t.Errorf("Lock in map missing.")
@@ -90,8 +90,8 @@ func TestNamespaceLockTest(t *testing.T) {
 	if testCase.lockedRefCount != nsLk.ref && testCase.shouldPass {
 		t.Errorf("Test %d fails, expected to pass. Wanted ref count is %d, got %d", 1, testCase.lockedRefCount, nsLk.ref)
 	}
-	testCase.runlk("a", "b") // unlock once.
-	testCase.runlk("a", "b") // unlock second time.
+	testCase.runlk("a", "b", "c") // unlock once.
+	testCase.runlk("a", "b", "c") // unlock second time.
 	if testCase.unlockedRefCount != nsLk.ref && testCase.shouldPass {
 		t.Errorf("Test %d fails, expected to pass. Wanted ref count is %d, got %d", 2, testCase.unlockedRefCount, nsLk.ref)
 	}
@@ -102,7 +102,7 @@ func TestNamespaceLockTest(t *testing.T) {
 
 	// Read lock 0 ref count.
 	testCase = testCases[2]
-	testCase.rlk("a", "c") // lock once.
+	testCase.rlk("a", "c", "d") // lock once.
 
 	nsLk, ok = nsMutex.lockMap[nsParam{"a", "c"}]
 	if !ok && testCase.shouldPass {
@@ -112,7 +112,7 @@ func TestNamespaceLockTest(t *testing.T) {
 	if testCase.lockedRefCount != nsLk.ref && testCase.shouldPass {
 		t.Errorf("Test %d fails, expected to pass. Wanted ref count is %d, got %d", 3, testCase.lockedRefCount, nsLk.ref)
 	}
-	testCase.runlk("a", "c") // unlock once.
+	testCase.runlk("a", "c", "d") // unlock once.
 	if testCase.unlockedRefCount != nsLk.ref && testCase.shouldPass {
 		t.Errorf("Test %d fails, expected to pass. Wanted ref count is %d, got %d", 3, testCase.unlockedRefCount, nsLk.ref)
 	}

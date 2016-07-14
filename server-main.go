@@ -61,6 +61,22 @@ ENVIRONMENT VARIABLES:
      MINIO_CACHE_SIZE: Set total cache size in NN[GB|MB|KB]. Defaults to 8GB.
      MINIO_CACHE_EXPIRY: Set cache expiration duration in NN[h|m|s]. Defaults to 72 hours.
 
+		 Example: export  MINIO_CACHE_EXPIRY=10hours
+		          export  MINIO_CACHE_SIZE=5GB
+
+  TRACING:
+		MINIO_TRACE: Set to 1 to enable tracing.
+		Usage: export MINIO_TRACE=1
+
+		PROFILING:
+		  MINIO_PROFILER:  Enable profiler if $MINIO_PROFILER is set. Supported options are [cpu| mem| block].
+			MINIO_PROFILE_DIR: Set $MINIO_PROFILE_DIR to the directory where profiling information should be persisted.
+			Example: MINIO_PROFILER=cpu
+
+	 DEBUGGING LOCKS:
+	    MINIO_DEBUG: Enable debugging. Set value to lock to enable debugging lock related issues. The info can be found at /minio/lockInfo.
+			Example: export MINIO_DEBUG=lock
+
 EXAMPLES:
   1. Start minio server.
       $ minio {{.Name}} /home/shared
