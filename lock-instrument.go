@@ -149,7 +149,7 @@ func (n *nsLockMap) deleteLockInfoEntryForOps(param nsParam, operationID string)
 // else returns empty string
 func getOpsID() (opsID string) {
 	// check if lock debug is enabled.
-	if globalLockDebug {
+	if globalDebugLock {
 		// generated random ID.
 		opsID = string(generateRequestID())
 	}
@@ -157,7 +157,7 @@ func getOpsID() (opsID string) {
 }
 
 // Read entire state of the locks in the system and return.
-func generateSystemLockResponse() SystemLockState {
+func generateSystemLockResponse(bucket string) SystemLockState {
 	nsMutex.mutex.Lock()
 	defer nsMutex.mutex.Unlock()
 
@@ -168,23 +168,25 @@ func generateSystemLockResponse() SystemLockState {
 	lockState.TotalRunningLocks = nsMutex.runningLockCounter
 
 	for param := range nsMutex.debugLockMap {
-		volLockInfo := VolumeLockInfo{}
-		volLockInfo.Volume = param.volume
-		volLockInfo.Path = param.path
-		volLockInfo.TotalBlockedLocks = nsMutex.debugLockMap[param].blocked
-		volLockInfo.TotalRunningOps = nsMutex.debugLockMap[param].running
-		volLockInfo.TotalLocks = nsMutex.debugLockMap[param].ref
-		for opsID := range nsMutex.debugLockMap[param].lockInfo {
-			opsState := OpsLockState{}
-			opsState.OperationID = opsID
-			opsState.LockOrigin = nsMutex.debugLockMap[param].lockInfo[opsID].lockOrigin
-			opsState.LockType = nsMutex.debugLockMap[param].lockInfo[opsID].lockType
-			opsState.Status = nsMutex.debugLockMap[param].lockInfo[opsID].status
-			opsState.Since = time.Now().Sub(nsMutex.debugLockMap[param].lockInfo[opsID].since).String()
+		if param.volume == bucket {
+			volLockInfo := VolumeLockInfo{}
+			volLockInfo.Volume = param.volume
+			volLockInfo.Path = param.path
+			volLockInfo.TotalBlockedLocks = nsMutex.debugLockMap[param].blocked
+			volLockInfo.TotalRunningOps = nsMutex.debugLockMap[param].running
+			volLockInfo.TotalLocks = nsMutex.debugLockMap[param].ref
+			for opsID := range nsMutex.debugLockMap[param].lockInfo {
+				opsState := OpsLockState{}
+				opsState.OperationID = opsID
+				opsState.LockOrigin = nsMutex.debugLockMap[param].lockInfo[opsID].lockOrigin
+				opsState.LockType = nsMutex.debugLockMap[param].lockInfo[opsID].lockType
+				opsState.Status = nsMutex.debugLockMap[param].lockInfo[opsID].status
+				opsState.Since = time.Now().Sub(nsMutex.debugLockMap[param].lockInfo[opsID].since).String()
 
-			volLockInfo.OpsLockState = append(volLockInfo.OpsLockState, opsState)
+				volLockInfo.OpsLockState = append(volLockInfo.OpsLockState, opsState)
+			}
+			lockState.LocksInfoPerVolume = append(lockState.LocksInfoPerVolume, volLockInfo)
 		}
-		lockState.LocksInfoPerVolume = append(lockState.LocksInfoPerVolume, volLockInfo)
 	}
 	return lockState
 }

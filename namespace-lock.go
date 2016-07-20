@@ -52,7 +52,7 @@ var nsMutex *nsLockMap
 
 // initNSLock - initialize name space lock map.
 func initNSLock() {
-	if globalLockDebug {
+	if globalDebugLock {
 		// lock Debugging enabed, initialize nsLockMap with entry for debugging information.
 		nsMutex = &nsLockMap{
 			// entries of <volume,path> -> stateInfo of locks, for instrumentation purpose.
@@ -84,14 +84,14 @@ func (n *nsLockMap) lock(volume, path string, lockOrigin, opsID string, readLock
 		}
 		n.lockMap[param] = nsLk
 		// lock debugging enabled. Initialize lock debug info for given <volume, path> pair.
-		if globalLockDebug {
+		if globalDebugLock {
 			n.initLockInfoForVolumePath(param)
 		}
 	}
 
 	nsLk.ref++ // Update ref count here to avoid multiple races.
 
-	if globalLockDebug {
+	if globalDebugLock {
 		// change the state of the lock to be  blocked for the given pair of <volume, path> and <OperationID> will the lock unblocks.
 		n.statusNoneToBlocked(param, lockOrigin, opsID, readLock)
 	}
@@ -108,7 +108,7 @@ func (n *nsLockMap) lock(volume, path string, lockOrigin, opsID string, readLock
 	}
 
 	// check if lock debugging enabled.
-	if globalLockDebug {
+	if globalDebugLock {
 		// Changing the status of the operation from blocked to running.
 		// change the state of the lock to be  running (from blocked) for the given pair of <volume, path> and <OperationID>.
 		n.statusBlockedToRunning(param, lockOrigin, opsID, readLock)
@@ -140,7 +140,7 @@ func (n *nsLockMap) unlock(volume, path string, opsID string, readLock bool) {
 		if nsLk.ref != 0 {
 			nsLk.ref--
 			// locking debug enabled, delete the lock state entry for given operation ID.
-			if globalLockDebug {
+			if globalDebugLock {
 				n.deleteLockInfoEntryForOps(param, opsID)
 			}
 		}
@@ -149,7 +149,7 @@ func (n *nsLockMap) unlock(volume, path string, opsID string, readLock bool) {
 			// Remove from the map if there are no more references.
 			delete(n.lockMap, param)
 			// locking debug enabled, delete the lock state entry for given <volume, path> pair.
-			if globalLockDebug {
+			if globalDebugLock {
 				n.deleteLockInfoEntryForVolumePath(param, opsID)
 			}
 		}
@@ -161,7 +161,7 @@ func (n *nsLockMap) unlock(volume, path string, opsID string, readLock bool) {
 func (n *nsLockMap) Lock(volume, path string, opsID string) {
 	var lockOrigin string
 	// lock debugging enabled. The caller information of the lock held has be obtained here before calling any other function.
-	if globalLockDebug {
+	if globalDebugLock {
 		// fetching the package, function name and the line number of the caller from the runtime.
 		// here is an example https://play.golang.org/p/perrmNRI9_ .
 		pc, fn, line, success := runtime.Caller(1)
@@ -184,7 +184,7 @@ func (n *nsLockMap) Unlock(volume, path string, opsID string) {
 func (n *nsLockMap) RLock(volume, path, opsID string) {
 	var lockOrigin string
 	// lock debugging enabled. The caller information of the lock held has be obtained here before calling any other function.
-	if globalLockDebug {
+	if globalDebugLock {
 		// fetching the package, function name and the line number of the caller from the runtime.
 		// here is an example https://play.golang.org/p/perrmNRI9_ .
 		pc, fn, line, success := runtime.Caller(1)

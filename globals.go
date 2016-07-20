@@ -17,9 +17,10 @@
 package main
 
 import (
+	"os"
+
 	"github.com/fatih/color"
 	"github.com/minio/minio/pkg/objcache"
-	"os"
 )
 
 // Global constants for Minio.
@@ -40,9 +41,11 @@ const (
 )
 
 var (
-	globalQuiet     = false // Quiet flag set via command line
-	globalTrace     = false // Trace flag set via environment setting.
-	globalLockDebug = false // Lock debug info set via environment var MINIO_DEBUG=lock .
+	globalQuiet       = false // Quiet flag set via command line
+	globalTrace       = false // Trace flag set via environment setting.
+	globalDebug       = false // Debug flag set to print debug info.
+	globalDebugLock   = false // Lock debug info set via environment variable MINIO_DEBUG=lock .
+	globalDebugMemory = false // Memory debug info set via environment variable MINIO_DEBUG=mem
 	// Add new global flags here.
 
 	// Maximum connections handled per
@@ -65,8 +68,12 @@ var (
 
 // fetch from environment variables and set the global values related to locks.
 func setGlobalsDebugFromEnv() {
-	switch os.Getenv("MINIO_DEBUG") {
+	debugEnv := os.Getenv("MINIO_DEBUG")
+	switch debugEnv {
 	case "lock":
-		globalLockDebug = true
+		globalDebugLock = true
+	case "mem":
+		globalDebugMemory = true
 	}
+	globalDebug = globalDebugLock || globalDebugMemory
 }

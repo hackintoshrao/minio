@@ -72,16 +72,16 @@ func registerWebRouter(mux *router.Router, web *webAPIHandlers) {
 	webRPC.RegisterService(web, "Web")
 
 	// RPC handler at URI - /minio/webrpc
-	webBrowserRouter.Methods("POST").Path("/webrpc").Handler(webRPC)
-	webBrowserRouter.Methods("PUT").Path("/upload/{bucket}/{object:.+}").HandlerFunc(web.Upload)
-	webBrowserRouter.Methods("GET").Path("/download/{bucket}/{object:.+}").Queries("token", "{token:.*}").HandlerFunc(web.Download)
+	webBrowserRouter.Methods("POST").Path("/webrpc").HeadersRegexp("User-Agent", "Mozilla").Handler(webRPC)
+	webBrowserRouter.Methods("PUT").Path("/upload/{bucket}/{object:.+}").HeadersRegexp("User-Agent", "Mozilla").HandlerFunc(web.Upload)
+	webBrowserRouter.Methods("GET").Path("/download/{bucket}/{object:.+}").HeadersRegexp("User-Agent", "Mozilla").Queries("token", "{token:.*}").HandlerFunc(web.Download)
 
 	// Add compression for assets.
 	compressedAssets := handlers.CompressHandler(http.StripPrefix(reservedBucket, http.FileServer(assetFS())))
 
 	// Serve javascript files and favicon from assets.
-	webBrowserRouter.Path(fmt.Sprintf("/{assets:[^/]+.js|%s}", specialAssets)).Handler(compressedAssets)
+	webBrowserRouter.Path(fmt.Sprintf("/{assets:[^/]+.js|%s}", specialAssets)).HeadersRegexp("User-Agent", "Mozilla").Handler(compressedAssets)
 
 	// Serve index.html for rest of the requests.
-	webBrowserRouter.Path("/{index:.*}").Handler(indexHandler{http.StripPrefix(reservedBucket, http.FileServer(assetFS()))})
+	webBrowserRouter.Path("/{index:.*}").HeadersRegexp("User-Agent", "Mozilla").Handler(indexHandler{http.StripPrefix(reservedBucket, http.FileServer(assetFS()))})
 }
