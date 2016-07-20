@@ -19,7 +19,7 @@ package main
 import (
 	"net/http"
 
-	"github.com/gorilla/mux"
+	router "github.com/gorilla/mux"
 )
 
 // SystemLockState - Structure to fill the lock state of entire object storage.
@@ -51,12 +51,15 @@ type OpsLockState struct {
 	Since       string `json:"statusSince"` // time info of the since how long the status holds true, value in seconds.
 }
 
+func registerDebugRouter(mux *router.Router) {
+	debugRouter := mux.PathPrefix(reservedBucket).Subrouter()
+	// return all the locking state information for all <bucket, object> pair.
+	debugRouter.Methods("GET").Path("/debug/locks").HandlerFunc(debugReturnSystemLockState)
+}
+
 // Template for handler.
 func debugReturnSystemLockState(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	bucket := vars["bucket"]
-
-	response := generateSystemLockResponse(bucket)
+	response := generateSystemLockResponse()
 	encodedSuccessResponse := mustEncodeJSON(response)
 	// write headers
 	setCommonHeaders(w)

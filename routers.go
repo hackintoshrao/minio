@@ -61,6 +61,10 @@ func configureServerHandler(srvCmdConfig serverCmdConfig) http.Handler {
 	mux := router.NewRouter()
 
 	// Register all routers.
+	if globalDebug {
+		registerDebugRouter(mux)
+	}
+
 	registerStorageRPCRouter(mux, storageRPC)
 	registerWebRouter(mux, webHandlers)
 	registerAPIRouter(mux, apiHandlers)

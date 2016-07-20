@@ -157,7 +157,7 @@ func getOpsID() (opsID string) {
 }
 
 // Read entire state of the locks in the system and return.
-func generateSystemLockResponse(bucket string) SystemLockState {
+func generateSystemLockResponse() SystemLockState {
 	nsMutex.mutex.Lock()
 	defer nsMutex.mutex.Unlock()
 
@@ -168,25 +168,23 @@ func generateSystemLockResponse(bucket string) SystemLockState {
 	lockState.TotalRunningLocks = nsMutex.runningLockCounter
 
 	for param := range nsMutex.debugLockMap {
-		if param.volume == bucket {
-			volLockInfo := VolumeLockInfo{}
-			volLockInfo.Volume = param.volume
-			volLockInfo.Path = param.path
-			volLockInfo.TotalBlockedLocks = nsMutex.debugLockMap[param].blocked
-			volLockInfo.TotalRunningOps = nsMutex.debugLockMap[param].running
-			volLockInfo.TotalLocks = nsMutex.debugLockMap[param].ref
-			for opsID := range nsMutex.debugLockMap[param].lockInfo {
-				opsState := OpsLockState{}
-				opsState.OperationID = opsID
-				opsState.LockOrigin = nsMutex.debugLockMap[param].lockInfo[opsID].lockOrigin
-				opsState.LockType = nsMutex.debugLockMap[param].lockInfo[opsID].lockType
-				opsState.Status = nsMutex.debugLockMap[param].lockInfo[opsID].status
-				opsState.Since = time.Now().Sub(nsMutex.debugLockMap[param].lockInfo[opsID].since).String()
+		volLockInfo := VolumeLockInfo{}
+		volLockInfo.Volume = param.volume
+		volLockInfo.Path = param.path
+		volLockInfo.TotalBlockedLocks = nsMutex.debugLockMap[param].blocked
+		volLockInfo.TotalRunningOps = nsMutex.debugLockMap[param].running
+		volLockInfo.TotalLocks = nsMutex.debugLockMap[param].ref
+		for opsID := range nsMutex.debugLockMap[param].lockInfo {
+			opsState := OpsLockState{}
+			opsState.OperationID = opsID
+			opsState.LockOrigin = nsMutex.debugLockMap[param].lockInfo[opsID].lockOrigin
+			opsState.LockType = nsMutex.debugLockMap[param].lockInfo[opsID].lockType
+			opsState.Status = nsMutex.debugLockMap[param].lockInfo[opsID].status
+			opsState.Since = time.Now().Sub(nsMutex.debugLockMap[param].lockInfo[opsID].since).String()
 
-				volLockInfo.OpsLockState = append(volLockInfo.OpsLockState, opsState)
-			}
-			lockState.LocksInfoPerVolume = append(lockState.LocksInfoPerVolume, volLockInfo)
+			volLockInfo.OpsLockState = append(volLockInfo.OpsLockState, opsState)
 		}
+		lockState.LocksInfoPerVolume = append(lockState.LocksInfoPerVolume, volLockInfo)
 	}
 	return lockState
 }

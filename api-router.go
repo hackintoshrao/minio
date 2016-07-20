@@ -31,11 +31,6 @@ func registerAPIRouter(mux *router.Router, api objectAPIHandlers) {
 	// Bucket router
 	bucket := apiRouter.PathPrefix("/{bucket}").Subrouter()
 
-	if globalDebug {
-		// return all the locking state information for all <bucket, object> pair.
-		bucket.Methods("GET").Path("/debug/locks").HandlerFunc(debugReturnSystemLockState)
-	}
-
 	/// Object operations
 
 	// HeadObject
