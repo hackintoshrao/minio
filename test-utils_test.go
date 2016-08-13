@@ -806,6 +806,13 @@ func initTestAPIEndPoints(objLayer ObjectLayer, apiFunctions []string) http.Hand
 	// Iterate the list of API functions requested for and register them in mux HTTP handler.
 	for _, apiFunction := range apiFunctions {
 		switch apiFunction {
+		// Register GET object API end point.
+		case "GetObject":
+			bucket.Methods("GET").Path("/{object:.+}").HandlerFunc(api.GetObjectHandler)
+		// Register PUT object API end point.
+		case "PutObject":
+			bucket.Methods("PUT").Path("/{object:.+}").HandlerFunc(api.PutObjectHandler)
+
 		// Register PutBucket Policy handler.
 		case "PutBucketPolicy":
 			bucket.Methods("PUT").HandlerFunc(api.PutBucketPolicyHandler).Queries("policy", "")
