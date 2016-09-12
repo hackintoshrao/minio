@@ -250,7 +250,9 @@ func (e InvalidUploadID) Error() string {
 }
 
 // InvalidPart One or more of the specified parts could not be found
-type InvalidPart struct{}
+type InvalidPart struct {
+	PartNumber string
+}
 
 func (e InvalidPart) Error() string {
 	return "One or more of the specified parts could not be found"

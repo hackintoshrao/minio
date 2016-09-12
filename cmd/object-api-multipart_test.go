@@ -1687,7 +1687,7 @@ func testListObjectParts(obj ObjectLayer, instanceType string, t TestErrHandler)
 	}
 }
 
-// Test for validating complete Multipart upload.
+// // Test for validating complete Multipart upload.
 func TestObjectCompleteMultipartUpload(t *testing.T) {
 	ExecObjectLayerTest(t, testObjectCompleteMultipartUpload)
 }
@@ -1798,13 +1798,14 @@ func testObjectCompleteMultipartUpload(obj ObjectLayer, instanceType string, t T
 			},
 		},
 	}
+	// calculate the s3MD5 returned after successfull completion of complete multipart upload.
+	// Used to assert with the actual result.
 	s3MD5, err := completeMultipartMD5(inputParts[3].parts...)
 	if err != nil {
 		t.Fatalf("Obtaining S3MD5 failed")
 	}
 
-	// Test cases with sample input values for CompleteMultipartUpload.
-	testCases := []struct {
+	type cases struct {
 		bucket   string
 		object   string
 		uploadID string
@@ -1814,7 +1815,10 @@ func testObjectCompleteMultipartUpload(obj ObjectLayer, instanceType string, t T
 		expectedErr   error
 		// Flag indicating whether the test is expected to pass or not.
 		shouldPass bool
-	}{
+	}
+
+	// Test cases with sample input values for CompleteMultipartUpload.
+	testCases := []cases{
 		// Test cases with invalid bucket names (Test number 1-4).
 		{".test", "", "", []completePart{}, "", BucketNameInvalid{Bucket: ".test"}, false},
 		{"Test", "", "", []completePart{}, "", BucketNameInvalid{Bucket: "Test"}, false},
@@ -1834,7 +1838,7 @@ func testObjectCompleteMultipartUpload(obj ObjectLayer, instanceType string, t T
 		{bucketNames[0], objectNames[0], uploadIDs[0], []completePart{{ETag: "abcz"}}, "", fmt.Errorf("encoding/hex: invalid byte: U+007A 'z'"), false},
 		// Part number 0 doesn't exist, expecting InvalidPart error (Test number 12).
 		{bucketNames[0], objectNames[0], uploadIDs[0], []completePart{{ETag: "abcd", PartNumber: 0}}, "", InvalidPart{}, false},
-		// // Upload and PartNumber exists, But a deliberate ETag mismatch is introduced (Test number 13).
+		// Upload and PartNumber exists, But a deliberate ETag mismatch is introduced (Test number 13).
 		{bucketNames[0], objectNames[0], uploadIDs[0], inputParts[0].parts, "", BadDigest{}, false},
 		// Test case with non existent object name (Test number 14).
 		{bucketNames[0], "my-object", uploadIDs[0], []completePart{{ETag: "abcd", PartNumber: 1}}, "", InvalidUploadID{UploadID: uploadIDs[0]}, false},
@@ -1851,8 +1855,9 @@ func testObjectCompleteMultipartUpload(obj ObjectLayer, instanceType string, t T
 		{bucketNames[0], objectNames[0], uploadIDs[0], inputParts[4].parts, "", InvalidUploadID{UploadID: uploadIDs[0]}, false},
 	}
 
-	for i, testCase := range testCases {
-		actualResult, actualErr := obj.CompleteMultipartUpload(testCase.bucket, testCase.object, testCase.uploadID, testCase.parts)
+	// Asserts the returned error and result with the expected values from the test case.
+	assertResult := func(actualErr error, actualResult string, testCase cases, i int) {
+
 		if actualErr != nil && testCase.shouldPass {
 			t.Errorf("Test %d: %s: Expected to pass, but failed with: <ERROR> %s", i+1, instanceType, actualErr)
 		}
@@ -1874,6 +1879,23 @@ func testObjectCompleteMultipartUpload(obj ObjectLayer, instanceType string, t T
 			}
 		}
 	}
+
+	var actualResult string
+	// iterate through the cases and assert the result.
+	for i, testCase := range testCases {
+		validateInput, joinParts := obj.CompleteMultipartUpload(testCase.bucket, testCase.object, testCase.uploadID, testCase.parts)
+
+		actualErr := validateInput()
+		// validation of inputs didn't succeed, assert the error message and continue.
+		if actualErr != nil {
+			assertResult(actualErr, "", testCase, i)
+			continue
+		}
+		// parts validated above, proceed with parts join.
+		actualResult, actualErr = joinParts()
+		assertResult(actualErr, actualResult, testCase, i)
+	}
+
 }
 
 // Benchmarks for ObjectLayer.PutObjectPart().

@@ -46,5 +46,5 @@ type ObjectLayer interface {
 	PutObjectPart(bucket, object, uploadID string, partID int, size int64, data io.Reader, md5Hex string) (md5 string, err error)
 	ListObjectParts(bucket, object, uploadID string, partNumberMarker int, maxParts int) (result ListPartsInfo, err error)
 	AbortMultipartUpload(bucket, object, uploadID string) error
-	CompleteMultipartUpload(bucket, object, uploadID string, uploadedParts []completePart) (md5 string, err error)
+	CompleteMultipartUpload(bucket, object, uploadID string, uploadedParts []completePart) (func() error, func() (string, error))
 }

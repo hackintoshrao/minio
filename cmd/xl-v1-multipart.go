@@ -23,6 +23,7 @@ import (
 	"io"
 	"io/ioutil"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -609,230 +610,246 @@ func (xl xlObjects) ListObjectParts(bucket, object, uploadID string, partNumberM
 // md5sums of all the parts.
 //
 // Implements S3 compatible Complete multipart API.
-func (xl xlObjects) CompleteMultipartUpload(bucket string, object string, uploadID string, parts []completePart) (string, error) {
-	// Verify if bucket is valid.
-	if !IsValidBucketName(bucket) {
-		return "", traceError(BucketNameInvalid{Bucket: bucket})
-	}
-	// Verify whether the bucket exists.
-	if !xl.isBucketExist(bucket) {
-		return "", traceError(BucketNotFound{Bucket: bucket})
-	}
-	if !IsValidObjectName(object) {
-		return "", traceError(ObjectNameInvalid{
-			Bucket: bucket,
-			Object: object,
-		})
-	}
-
-	// generates random string on setting MINIO_DEBUG=lock, else returns empty string.
-	// used for instrumentation on locks.
-	opsID := getOpsID()
-
-	// Hold lock so that
-	// 1) no one aborts this multipart upload
-	// 2) no one does a parallel complete-multipart-upload on this multipart upload
-	nsMutex.Lock(minioMetaBucket, pathJoin(mpartMetaPrefix, bucket, object, uploadID), opsID)
-	defer nsMutex.Unlock(minioMetaBucket, pathJoin(mpartMetaPrefix, bucket, object, uploadID), opsID)
-
-	if !xl.isUploadIDExists(bucket, object, uploadID) {
-		return "", traceError(InvalidUploadID{UploadID: uploadID})
-	}
-	// Calculate s3 compatible md5sum for complete multipart.
-	s3MD5, err := completeMultipartMD5(parts...)
-	if err != nil {
-		return "", err
-	}
-
-	uploadIDPath := pathJoin(mpartMetaPrefix, bucket, object, uploadID)
-
-	// Read metadata associated with the object from all disks.
-	partsMetadata, errs := readAllXLMetadata(xl.storageDisks, minioMetaBucket, uploadIDPath)
-	// Do we have writeQuorum?.
-	if !isDiskQuorum(errs, xl.writeQuorum) {
-		return "", toObjectErr(traceError(errXLWriteQuorum), bucket, object)
-	}
-
-	onlineDisks, modTime := listOnlineDisks(xl.storageDisks, partsMetadata, errs)
-
+func (xl xlObjects) CompleteMultipartUpload(bucket string, object string, uploadID string, parts []completePart) (validateInput func() error, joinParts func() (string, error)) {
+	var currentXLMeta, xlMeta xlMetaV1
+	var onlineDisks []StorageAPI
+	var modTime time.Time
+	var partsMetadata []xlMetaV1
+	var errs []error
 	// Calculate full object size.
 	var objectSize int64
+	var s3MD5 string
+	var err error
 
-	// Pick one from the first valid metadata.
-	xlMeta := pickValidXLMeta(partsMetadata, modTime)
-
-	// Order online disks in accordance with distribution order.
-	onlineDisks = getOrderedDisks(xlMeta.Erasure.Distribution, onlineDisks)
-
-	// Order parts metadata in accordance with distribution order.
-	partsMetadata = getOrderedPartsMetadata(xlMeta.Erasure.Distribution, partsMetadata)
-
-	// Save current xl meta for validation.
-	var currentXLMeta = xlMeta
-
-	// Allocate parts similar to incoming slice.
-	xlMeta.Parts = make([]objectPartInfo, len(parts))
-
-	// Validate each part and then commit to disk.
-	for i, part := range parts {
-		partIdx := objectPartIndex(currentXLMeta.Parts, part.PartNumber)
-		// All parts should have same part number.
-		if partIdx == -1 {
-			return "", traceError(InvalidPart{})
+	uploadIDPath := pathJoin(mpartMetaPrefix, bucket, object, uploadID)
+	validateInput = func() error {
+		// Verify if bucket is valid.
+		if !IsValidBucketName(bucket) {
+			return traceError(BucketNameInvalid{Bucket: bucket})
 		}
-
-		// All parts should have same ETag as previously generated.
-		if currentXLMeta.Parts[partIdx].ETag != part.ETag {
-			return "", traceError(BadDigest{})
+		// Verify whether the bucket exists.
+		if !xl.isBucketExist(bucket) {
+			return traceError(BucketNotFound{Bucket: bucket})
 		}
-
-		// All parts except the last part has to be atleast 5MB.
-		if (i < len(parts)-1) && !isMinAllowedPartSize(currentXLMeta.Parts[partIdx].Size) {
-			return "", traceError(PartTooSmall{
-				PartNumber: part.PartNumber,
-				PartSize:   currentXLMeta.Parts[partIdx].Size,
-				PartETag:   part.ETag,
+		if !IsValidObjectName(object) {
+			return traceError(ObjectNameInvalid{
+				Bucket: bucket,
+				Object: object,
 			})
 		}
 
-		// Last part could have been uploaded as 0bytes, do not need
-		// to save it in final `xl.json`.
-		if (i == len(parts)-1) && currentXLMeta.Parts[partIdx].Size == 0 {
-			xlMeta.Parts = xlMeta.Parts[:i] // Skip the part.
-			continue
+		// generates random string on setting MINIO_DEBUG=lock, else returns empty string.
+		// used for instrumentation on locks.
+		opsID := getOpsID()
+
+		// Hold lock so that
+		// 1) no one aborts this multipart upload
+		// 2) no one does a parallel complete-multipart-upload on this multipart upload
+		nsMutex.Lock(minioMetaBucket, pathJoin(mpartMetaPrefix, bucket, object, uploadID), opsID)
+		defer nsMutex.Unlock(minioMetaBucket, pathJoin(mpartMetaPrefix, bucket, object, uploadID), opsID)
+		if !xl.isUploadIDExists(bucket, object, uploadID) {
+			return traceError(InvalidUploadID{UploadID: uploadID})
 		}
-
-		// Save for total object size.
-		objectSize += currentXLMeta.Parts[partIdx].Size
-
-		// Add incoming parts.
-		xlMeta.Parts[i] = objectPartInfo{
-			Number: part.PartNumber,
-			ETag:   part.ETag,
-			Size:   currentXLMeta.Parts[partIdx].Size,
-			Name:   fmt.Sprintf("part.%d", part.PartNumber),
-		}
-	}
-
-	// Check if an object is present as one of the parent dir.
-	if xl.parentDirIsObject(bucket, path.Dir(object)) {
-		return "", toObjectErr(traceError(errFileAccessDenied), bucket, object)
-	}
-
-	// Save the final object size and modtime.
-	xlMeta.Stat.Size = objectSize
-	xlMeta.Stat.ModTime = time.Now().UTC()
-
-	// Save successfully calculated md5sum.
-	xlMeta.Meta["md5Sum"] = s3MD5
-	uploadIDPath = path.Join(mpartMetaPrefix, bucket, object, uploadID)
-	tempUploadIDPath := path.Join(tmpMetaPrefix, uploadID)
-
-	// Update all xl metadata, make sure to not modify fields like
-	// checksum which are different on each disks.
-	for index := range partsMetadata {
-		partsMetadata[index].Stat = xlMeta.Stat
-		partsMetadata[index].Meta = xlMeta.Meta
-		partsMetadata[index].Parts = xlMeta.Parts
-	}
-
-	// Write unique `xl.json` for each disk.
-	if err = writeUniqueXLMetadata(onlineDisks, minioMetaBucket, tempUploadIDPath, partsMetadata, xl.writeQuorum); err != nil {
-		return "", toObjectErr(err, minioMetaBucket, tempUploadIDPath)
-	}
-	rErr := commitXLMetadata(onlineDisks, tempUploadIDPath, uploadIDPath, xl.writeQuorum)
-	if rErr != nil {
-		return "", toObjectErr(rErr, minioMetaBucket, uploadIDPath)
-	}
-
-	// generates random string on setting MINIO_DEBUG=lock, else returns empty string.
-	// used for instrumentation on locks.
-	opsID = getOpsID()
-
-	// Hold write lock on the destination before rename.
-	nsMutex.Lock(bucket, object, opsID)
-	defer func() {
-		// A new complete multipart upload invalidates any
-		// previously cached object in memory.
-		xl.objCache.Delete(path.Join(bucket, object))
-
-		// This lock also protects the cache namespace.
-		nsMutex.Unlock(bucket, object, opsID)
-
-		// Prefetch the object from disk by triggering a fake GetObject call
-		// Unlike a regular single PutObject,  multipart PutObject is comes in
-		// stages and it is harder to cache.
-		go xl.GetObject(bucket, object, 0, objectSize, ioutil.Discard)
-	}()
-
-	// Rename if an object already exists to temporary location.
-	uniqueID := getUUID()
-	if xl.isObject(bucket, object) {
-		// NOTE: Do not use online disks slice here.
-		// The reason is that existing object should be purged
-		// regardless of `xl.json` status and rolled back in case of errors.
-		err = renameObject(xl.storageDisks, bucket, object, minioMetaBucket, path.Join(tmpMetaPrefix, uniqueID), xl.writeQuorum)
+		// Calculate s3 compatible md5sum for complete multipart.
+		s3MD5, err = completeMultipartMD5(parts...)
 		if err != nil {
+			return err
+		}
+
+		// Read metadata associated with the object from all disks.
+		partsMetadata, errs = readAllXLMetadata(xl.storageDisks, minioMetaBucket, uploadIDPath)
+		// Do we have writeQuorum?.
+		if !isDiskQuorum(errs, xl.writeQuorum) {
+			return toObjectErr(traceError(errXLWriteQuorum), bucket, object)
+		}
+
+		onlineDisks, modTime = listOnlineDisks(xl.storageDisks, partsMetadata, errs)
+
+		// Pick one from the first valid metadata.
+		xlMeta = pickValidXLMeta(partsMetadata, modTime)
+
+		// Order online disks in accordance with distribution order.
+		onlineDisks = getOrderedDisks(xlMeta.Erasure.Distribution, onlineDisks)
+
+		// Order parts metadata in accordance with distribution order.
+		partsMetadata = getOrderedPartsMetadata(xlMeta.Erasure.Distribution, partsMetadata)
+
+		// Save current xl meta for validation.
+		currentXLMeta = xlMeta
+
+		// Allocate parts similar to incoming slice.
+		xlMeta.Parts = make([]objectPartInfo, len(parts))
+
+		// Validate each part and then commit to disk.
+		for i, part := range parts {
+			partIdx := objectPartIndex(currentXLMeta.Parts, part.PartNumber)
+			// All parts should have same part number.
+			if partIdx == -1 {
+				return traceError(InvalidPart{PartNumber: strconv.Itoa(part.PartNumber)})
+			}
+
+			// All parts should have same ETag as previously generated.
+			if currentXLMeta.Parts[partIdx].ETag != part.ETag {
+				return traceError(BadDigest{})
+			}
+
+			// All parts except the last part has to be atleast 5MB.
+			if (i < len(parts)-1) && !isMinAllowedPartSize(currentXLMeta.Parts[partIdx].Size) {
+				return traceError(PartTooSmall{
+					PartNumber: part.PartNumber,
+					PartSize:   currentXLMeta.Parts[partIdx].Size,
+					PartETag:   part.ETag,
+				})
+			}
+
+			// Last part could have been uploaded as 0bytes, do not need
+			// to save it in final `xl.json`.
+			if (i == len(parts)-1) && currentXLMeta.Parts[partIdx].Size == 0 {
+				xlMeta.Parts = xlMeta.Parts[:i] // Skip the part.
+				continue
+			}
+
+			// Save for total object size.
+			objectSize += currentXLMeta.Parts[partIdx].Size
+
+			// Add incoming parts.
+			xlMeta.Parts[i] = objectPartInfo{
+				Number: part.PartNumber,
+				ETag:   part.ETag,
+				Size:   currentXLMeta.Parts[partIdx].Size,
+				Name:   fmt.Sprintf("part.%d", part.PartNumber),
+			}
+		}
+		return nil
+	}
+
+	// part 2 of the function returned of objectLayer.CompleteMultipartUpload.
+	// The first function returned initializes variables required for functioning of JoinParts.
+	// So should called only after the first function is called.
+	joinParts = func() (string, error) {
+
+		// Check if an object is present as one of the parent dir.
+		if xl.parentDirIsObject(bucket, path.Dir(object)) {
+			return "", toObjectErr(traceError(errFileAccessDenied), bucket, object)
+		}
+
+		// Save the final object size and modtime.
+		xlMeta.Stat.Size = objectSize
+		xlMeta.Stat.ModTime = time.Now().UTC()
+
+		// Save successfully calculated md5sum.
+		xlMeta.Meta["md5Sum"] = s3MD5
+		uploadIDPath = path.Join(mpartMetaPrefix, bucket, object, uploadID)
+		tempUploadIDPath := path.Join(tmpMetaPrefix, uploadID)
+
+		// Update all xl metadata, make sure to not modify fields like
+		// checksum which are different on each disks.
+		for index := range partsMetadata {
+			partsMetadata[index].Stat = xlMeta.Stat
+			partsMetadata[index].Meta = xlMeta.Meta
+			partsMetadata[index].Parts = xlMeta.Parts
+		}
+
+		// Write unique `xl.json` for each disk.
+		if err = writeUniqueXLMetadata(onlineDisks, minioMetaBucket, tempUploadIDPath, partsMetadata, xl.writeQuorum); err != nil {
+			return "", toObjectErr(err, minioMetaBucket, tempUploadIDPath)
+		}
+		rErr := commitXLMetadata(onlineDisks, tempUploadIDPath, uploadIDPath, xl.writeQuorum)
+		if rErr != nil {
+			return "", toObjectErr(rErr, minioMetaBucket, uploadIDPath)
+		}
+
+		// generates random string on setting MINIO_DEBUG=lock, else returns empty string.
+		// used for instrumentation on locks.
+		opsID := getOpsID()
+
+		// Hold write lock on the destination before rename.
+		nsMutex.Lock(bucket, object, opsID)
+		defer func() {
+			// A new complete multipart upload invalidates any
+			// previously cached object in memory.
+			xl.objCache.Delete(path.Join(bucket, object))
+
+			// This lock also protects the cache namespace.
+			nsMutex.Unlock(bucket, object, opsID)
+
+			// Prefetch the object from disk by triggering a fake GetObject call
+			// Unlike a regular single PutObject,  multipart PutObject is comes in
+			// stages and it is harder to cache.
+			go xl.GetObject(bucket, object, 0, objectSize, ioutil.Discard)
+		}()
+
+		// Rename if an object already exists to temporary location.
+		uniqueID := getUUID()
+		if xl.isObject(bucket, object) {
+			// NOTE: Do not use online disks slice here.
+			// The reason is that existing object should be purged
+			// regardless of `xl.json` status and rolled back in case of errors.
+			err = renameObject(xl.storageDisks, bucket, object, minioMetaBucket, path.Join(tmpMetaPrefix, uniqueID), xl.writeQuorum)
+			if err != nil {
+				return "", toObjectErr(err, bucket, object)
+			}
+		}
+
+		// Remove parts that weren't present in CompleteMultipartUpload request.
+		for _, curpart := range currentXLMeta.Parts {
+			if objectPartIndex(xlMeta.Parts, curpart.Number) == -1 {
+				// Delete the missing part files. e.g,
+				// Request 1: NewMultipart
+				// Request 2: PutObjectPart 1
+				// Request 3: PutObjectPart 2
+				// Request 4: CompleteMultipartUpload --part 2
+				// N.B. 1st part is not present. This part should be removed from the storage.
+				xl.removeObjectPart(bucket, object, uploadID, curpart.Name)
+			}
+		}
+
+		// Rename the multipart object to final location.
+		if err = renameObject(onlineDisks, minioMetaBucket, uploadIDPath, bucket, object, xl.writeQuorum); err != nil {
 			return "", toObjectErr(err, bucket, object)
 		}
-	}
 
-	// Remove parts that weren't present in CompleteMultipartUpload request.
-	for _, curpart := range currentXLMeta.Parts {
-		if objectPartIndex(xlMeta.Parts, curpart.Number) == -1 {
-			// Delete the missing part files. e.g,
-			// Request 1: NewMultipart
-			// Request 2: PutObjectPart 1
-			// Request 3: PutObjectPart 2
-			// Request 4: CompleteMultipartUpload --part 2
-			// N.B. 1st part is not present. This part should be removed from the storage.
-			xl.removeObjectPart(bucket, object, uploadID, curpart.Name)
+		// Delete the previously successfully renamed object.
+		xl.deleteObject(minioMetaBucket, path.Join(tmpMetaPrefix, uniqueID))
+
+		// generates random string on setting MINIO_DEBUG=lock, else returns empty string.
+		// used for instrumentation on locks.
+		opsID = getOpsID()
+
+		// Hold the lock so that two parallel complete-multipart-uploads do not
+		// leave a stale uploads.json behind.
+		nsMutex.Lock(minioMetaBucket, pathJoin(mpartMetaPrefix, bucket, object), opsID)
+		defer nsMutex.Unlock(minioMetaBucket, pathJoin(mpartMetaPrefix, bucket, object), opsID)
+
+		// Validate if there are other incomplete upload-id's present for
+		// the object, if yes do not attempt to delete 'uploads.json'.
+		uploadsJSON, err := xl.readUploadsJSON(bucket, object)
+		if err != nil {
+			return "", toObjectErr(err, minioMetaBucket, object)
 		}
-	}
-
-	// Rename the multipart object to final location.
-	if err = renameObject(onlineDisks, minioMetaBucket, uploadIDPath, bucket, object, xl.writeQuorum); err != nil {
-		return "", toObjectErr(err, bucket, object)
-	}
-
-	// Delete the previously successfully renamed object.
-	xl.deleteObject(minioMetaBucket, path.Join(tmpMetaPrefix, uniqueID))
-
-	// generates random string on setting MINIO_DEBUG=lock, else returns empty string.
-	// used for instrumentation on locks.
-	opsID = getOpsID()
-
-	// Hold the lock so that two parallel complete-multipart-uploads do not
-	// leave a stale uploads.json behind.
-	nsMutex.Lock(minioMetaBucket, pathJoin(mpartMetaPrefix, bucket, object), opsID)
-	defer nsMutex.Unlock(minioMetaBucket, pathJoin(mpartMetaPrefix, bucket, object), opsID)
-
-	// Validate if there are other incomplete upload-id's present for
-	// the object, if yes do not attempt to delete 'uploads.json'.
-	uploadsJSON, err := xl.readUploadsJSON(bucket, object)
-	if err != nil {
-		return "", toObjectErr(err, minioMetaBucket, object)
-	}
-	// If we have successfully read `uploads.json`, then we proceed to
-	// purge or update `uploads.json`.
-	uploadIDIdx := uploadsJSON.Index(uploadID)
-	if uploadIDIdx != -1 {
-		uploadsJSON.Uploads = append(uploadsJSON.Uploads[:uploadIDIdx], uploadsJSON.Uploads[uploadIDIdx+1:]...)
-	}
-	if len(uploadsJSON.Uploads) > 0 {
-		if err = xl.updateUploadsJSON(bucket, object, uploadsJSON); err != nil {
+		// If we have successfully read `uploads.json`, then we proceed to
+		// purge or update `uploads.json`.
+		uploadIDIdx := uploadsJSON.Index(uploadID)
+		if uploadIDIdx != -1 {
+			uploadsJSON.Uploads = append(uploadsJSON.Uploads[:uploadIDIdx], uploadsJSON.Uploads[uploadIDIdx+1:]...)
+		}
+		if len(uploadsJSON.Uploads) > 0 {
+			if err = xl.updateUploadsJSON(bucket, object, uploadsJSON); err != nil {
+				return "", toObjectErr(err, minioMetaBucket, path.Join(mpartMetaPrefix, bucket, object))
+			}
+			// Return success.
+			return s3MD5, nil
+		} // No more pending uploads for the object, proceed to delete
+		// object completely from '.minio.sys/multipart'.
+		if err = xl.deleteObject(minioMetaBucket, path.Join(mpartMetaPrefix, bucket, object)); err != nil {
 			return "", toObjectErr(err, minioMetaBucket, path.Join(mpartMetaPrefix, bucket, object))
 		}
-		// Return success.
+
+		// Return md5sum.
 		return s3MD5, nil
-	} // No more pending uploads for the object, proceed to delete
-	// object completely from '.minio.sys/multipart'.
-	if err = xl.deleteObject(minioMetaBucket, path.Join(mpartMetaPrefix, bucket, object)); err != nil {
-		return "", toObjectErr(err, minioMetaBucket, path.Join(mpartMetaPrefix, bucket, object))
 	}
 
-	// Return md5sum.
-	return s3MD5, nil
+	return validateInput, joinParts
 }
 
 // abortMultipartUpload - wrapper for purging an ongoing multipart

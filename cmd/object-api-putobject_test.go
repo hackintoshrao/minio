@@ -372,10 +372,18 @@ func testObjectAPIMultipartPutObjectStaleFiles(obj ObjectLayer, instanceType str
 		{ETag: etag1, PartNumber: 1},
 		{ETag: etag2, PartNumber: 2},
 	}
-	_, err = obj.CompleteMultipartUpload(bucket, object, uploadID, parts)
+
+	validateParts, joinParts := obj.CompleteMultipartUpload(bucket, object, uploadID, parts)
+	err = validateParts()
 	if err != nil {
 		// Failed to complete multipart upload, abort.
-		t.Fatalf("%s : %s", instanceType, err.Error())
+		t.Fatalf("Minio %s : %s", instanceType, err.Error())
+	}
+
+	_, err = joinParts()
+	if err != nil {
+		// Failed to complete multipart upload, abort.
+		t.Fatalf("Minio %s : %s", instanceType, err.Error())
 	}
 
 	for _, disk := range disks {

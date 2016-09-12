@@ -733,7 +733,7 @@ func (api objectAPIHandlers) ListObjectPartsHandler(w http.ResponseWriter, r *ht
 	writeSuccessResponse(w, encodedSuccessResponse)
 }
 
-// CompleteMultipartUploadHandler - Complete multipart upload
+// CompleteMultipartUploadHandler - Complete multipart upload.
 func (api objectAPIHandlers) CompleteMultipartUploadHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
@@ -793,8 +793,39 @@ func (api objectAPIHandlers) CompleteMultipartUploadHandler(w http.ResponseWrite
 		part.ETag = strings.TrimSuffix(part.ETag, "\"")
 		completeParts = append(completeParts, part)
 	}
-	// Complete multipart upload.
-	// Send 200 OK
+
+	doneCh := make(chan struct{})
+	validateParts, joinParts := objectAPI.CompleteMultipartUpload(bucket, object, uploadID, completeParts)
+
+	// validate the parts for 4 following errors described below before sending 200OK and write space characters and joining the parts.
+	// 1. Entity Too Small  - Respond with 400 Bad Request.
+	// 2. Invalid Upload ID - Respond with 404 Not Found.
+	// 3. Invalid Part - Respond with 400 Bad Request.
+	err = validateParts()
+	if err != nil {
+		errorIf(err, "Unable to complete multipart upload.")
+		err = errorCause(err)
+		switch oErr := err.(type) {
+		case PartTooSmall:
+			// 1. Entity Too Small  - Respond with 400 Bad Request.
+			// Write part too small error.
+			writePartSmallErrorResponse(w, r, oErr)
+			// 2. Invalid Upload ID - Respond with 404 Not Found.
+		case InvalidUploadID:
+			writeInvalidUploadIDErrorResponse(w, r, oErr)
+			// 3. Invalid Part - Respond with 400 Bad Request.
+		case InvalidPart:
+			writeInvalidPartNumberErrorResponse(w, r, oErr)
+		default:
+			// Handle all other generic issues.
+			// 200 OK has to be sent for rest of the errors.
+			w.WriteHeader(http.StatusOK)
+			writeErrorResponse(w, r, toAPIErrorCode(err), r.URL.Path)
+		}
+		return
+	}
+	// parts, uploadID are validated.
+	// Now send Send 200 OK and start joining the parts.
 	setCommonHeaders(w)
 	w.WriteHeader(http.StatusOK)
 	// Xml headers need to be sent before we possibly send whitespace characters
@@ -806,28 +837,19 @@ func (api objectAPIHandlers) CompleteMultipartUploadHandler(w http.ResponseWrite
 		return
 	}
 
-	doneCh := make(chan struct{})
-
-	// Signal that completeMultipartUpload is over via doneCh
+	// Signal that joining parts is over is over via doneCh
 	go func(doneCh chan<- struct{}) {
-		md5Sum, err = objectAPI.CompleteMultipartUpload(bucket, object, uploadID, completeParts)
+		md5Sum, err = joinParts()
 		doneCh <- struct{}{}
 	}(doneCh)
 
 	sendWhiteSpaceChars(w, doneCh)
 	if err != nil {
-		errorIf(err, "Unable to complete multipart upload.")
-		switch oErr := err.(type) {
-		case PartTooSmall:
-			// Write part too small error.
-			writePartSmallErrorResponse(w, r, oErr)
-		default:
-			// Handle all other generic issues.
-			writeErrorResponseNoHeader(w, r, toAPIErrorCode(err), r.URL.Path)
-		}
+		// Though there's an error, The response status here will be 200OK. // The error info can be found the response body.
+		// http://docs.aws.amazon.com/AmazonS3/latest/API/mpUploadComplete.html .
+		writeErrorResponseNoHeader(w, r, toAPIErrorCode(err), r.URL.Path)
 		return
 	}
-
 	// Get object location.
 	location := getLocation(r)
 	// Generate complete multipart response.

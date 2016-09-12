@@ -20,6 +20,21 @@ package cmd
 
 import "net/http"
 
+// Represents additional fields necessary for ErrPartTooSmall S3 error.
+type completeMultipartAPIError struct {
+	// Proposed size represents uploaded size of the part.
+	ProposedSize int64
+	// Minimum size allowed epresents the minimum size allowed per
+	// part. Defaults to 5MB.
+	MinSizeAllowed int64
+	// Part number of the part which is incorrect.
+	PartNumber int
+	// ETag of the part which is incorrect.
+	PartETag string
+	// Other default XML error responses.
+	APIErrorResponse
+}
+
 // writeErrorResponsePartTooSmall - function is used specifically to
 // construct a proper error response during CompleteMultipartUpload
 // when one of the parts is < 5MB.
@@ -28,25 +43,66 @@ import "net/http"
 // error. So we construct a new type which lies well within the scope
 // of this function.
 func writePartSmallErrorResponse(w http.ResponseWriter, r *http.Request, err PartTooSmall) {
-	// Represents additional fields necessary for ErrPartTooSmall S3 error.
-	type completeMultipartAPIError struct {
-		// Proposed size represents uploaded size of the part.
-		ProposedSize int64
-		// Minimum size allowed epresents the minimum size allowed per
-		// part. Defaults to 5MB.
-		MinSizeAllowed int64
-		// Part number of the part which is incorrect.
-		PartNumber int
-		// ETag of the part which is incorrect.
-		PartETag string
-		// Other default XML error responses.
-		APIErrorResponse
-	}
+
+	apiError := getAPIError(toAPIErrorCode(err))
 	// Generate complete multipart error response.
-	errorResponse := getAPIErrorResponse(getAPIError(toAPIErrorCode(err)), r.URL.Path)
+	errorResponse := getAPIErrorResponse(apiError, r.URL.Path)
 	cmpErrResp := completeMultipartAPIError{err.PartSize, int64(5242880), err.PartNumber, err.PartETag, errorResponse}
 	encodedErrorResponse := encodeResponse(cmpErrResp)
+	// respond with 400 bad request.
+	w.WriteHeader(apiError.HTTPStatusCode)
 	// Write error body
+	w.Write(encodedErrorResponse)
+	w.(http.Flusher).Flush()
+}
+
+// Represents additional fields necessary for ErrInvalidUploadID S3 error.
+type invalidUploadIDAPIError struct {
+	UploadID string
+	// Other default XML error responses.
+	APIErrorResponse
+}
+
+// error response incase of InvalidUploadID during complete multipart operation.
+func writeInvalidUploadIDErrorResponse(w http.ResponseWriter, r *http.Request, err InvalidUploadID) {
+
+	apiError := getAPIError(toAPIErrorCode(err))
+	// Generate complete multipart error response.
+	errorResponse := getAPIErrorResponse(apiError, r.URL.Path)
+	// Apart from common error response, need uploadID too in the XML err response.
+	invalidIDErrResp := invalidUploadIDAPIError{err.UploadID, errorResponse}
+
+	// write Header
+	w.WriteHeader(apiError.HTTPStatusCode)
+	// XML encode the response.
+	encodedErrorResponse := encodeResponse(invalidIDErrResp)
+	// Write error body.
+	w.Write(encodedErrorResponse)
+	w.(http.Flusher).Flush()
+}
+
+type invalidPartNumberAPIError struct {
+	PartNumber string
+	// Other default XML error responses.
+	APIErrorResponse
+}
+
+// error response incase of invalid part number during complete multipart operation.
+func writeInvalidPartNumberErrorResponse(w http.ResponseWriter, r *http.Request, err InvalidPart) {
+	// Represents additional fields necessary for ErrPartTooSmall S3 error.
+
+	apiError := getAPIError(toAPIErrorCode(err))
+	// Generate complete multipart error response.
+	errorResponse := getAPIErrorResponse(apiError, r.URL.Path)
+	// Apart from common error response, need uploadID too in the XML err response.
+	invalidIDErrResp := invalidPartNumberAPIError{err.PartNumber, errorResponse}
+
+	// write Header.
+	// will be writing 400 bad request.
+	w.WriteHeader(apiError.HTTPStatusCode)
+	// XML encode the response.
+	encodedErrorResponse := encodeResponse(invalidIDErrResp)
+	// Write error body.
 	w.Write(encodedErrorResponse)
 	w.(http.Flusher).Flush()
 }
