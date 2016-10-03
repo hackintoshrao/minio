@@ -86,10 +86,10 @@ func migrate() {
 	// Migrate other configs here.
 }
 
-func enableLoggers() {
+func enableLoggers(serverConfig *serverConfigV7) {
 	// Enable all loggers here.
-	enableConsoleLogger()
-	enableFileLogger()
+	enableConsoleLogger(serverConfig)
+	enableFileLogger(serverConfig)
 	// Add your logger here.
 }
 
@@ -114,11 +114,17 @@ func findClosestCommands(command string) []string {
 	return closestCommands
 }
 
+// Register all command line options to run Minio binary.
 func registerApp() *cli.App {
 	// Register all commands.
+
+	// Register `minio server`.
 	registerCommand(serverCmd)
+	// Register `minio version`.
 	registerCommand(versionCmd)
+	// Register `minio update`.
 	registerCommand(updateCmd)
+	// Register `minio control`.
 	registerCommand(controlCmd)
 
 	// Set up app.
@@ -157,54 +163,13 @@ func checkMainSyntax(c *cli.Context) {
 
 // Main main for minio server.
 func Main() {
+	// Register all command line options for binary binary.
+	// The following are the available options to run minio binary.
+	// $ minio server (find in server-main.go)
+	// $ minio update (find in update-main.go)
+	// $ minio version ( find in version-main.go)
+	// $ minio control ( find in control-main.go)
 	app := registerApp()
-	app.Before = func(c *cli.Context) error {
-
-		configDir := c.GlobalString("config-dir")
-		if configDir == "" {
-			fatalIf(errors.New("Config directory is empty"), "Unable to get config file.")
-		}
-		// Sets new config folder.
-		setGlobalConfigPath(configDir)
-
-		// Valid input arguments to main.
-		checkMainSyntax(c)
-
-		// Migrate any old version of config / state files to newer format.
-		migrate()
-
-		// Initialize config.
-		err := initConfig()
-		fatalIf(err, "Unable to initialize minio config.")
-
-		// Enable all loggers by now.
-		enableLoggers()
-
-		// Init the error tracing module.
-		initError()
-
-		// Set global quiet flag.
-		globalQuiet = c.Bool("quiet") || c.GlobalBool("quiet")
-
-		// Do not print update messages, if quiet flag is set.
-		if !globalQuiet {
-			if strings.HasPrefix(Version, "RELEASE.") {
-				updateMsg, _, err := getReleaseUpdate(minioUpdateStableURL)
-				if err != nil {
-					// Ignore any errors during getReleaseUpdate() because
-					// the internet might not be available.
-					return nil
-				}
-				console.Println(updateMsg)
-			}
-		}
-		return nil
-	}
-
-	// Start profiler if env is set.
-	if profiler := os.Getenv("MINIO_PROFILER"); profiler != "" {
-		globalProfiler = startProfiler(profiler)
-	}
 
 	// Run the app - exit on error.
 	app.RunAndExitOnError()

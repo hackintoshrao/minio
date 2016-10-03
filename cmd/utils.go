@@ -260,7 +260,7 @@ func startProfiler(profiler string) interface {
 var globalShutdownSignalCh = make(chan shutdownSignal, 1)
 
 // Global profiler to be used by shutdown go-routine.
-var globalProfiler interface {
+type profiler interface {
 	Stop()
 }
 

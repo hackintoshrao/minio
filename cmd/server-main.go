@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/minio/cli"
+	"github.com/minio/minio/pkg/objcache"
 )
 
 var srvConfig serverCmdConfig
@@ -94,6 +95,83 @@ EXAMPLES:
 `,
 }
 
+type Context struct {
+	// mutex for atomic access of fields.
+	sync.Mutex
+	// indicates whether the connection in http or https.
+	IsSecure       bool
+	IsDebugEnabled bool
+	// Trace flag set via environment setting.
+	IsTraceEnabled bool
+	// Debug flag set to print debug info.
+	IsDebug bool
+	// Directory in which Minio configuration is stored.
+	ConfigDir string
+	// server address.
+	ServerAddr string
+	// Cache size.
+	CacheSize int64
+	// Cache Duration.
+	CacheDuration time.Duration
+	// Disks.
+	Disks []string
+	// Ignored Disks.
+	IgnoredDisks []string
+	// Maximum connections handled per
+	// server, defaults to 0 (unlimited).
+	MaxConn int
+}
+
+func (ctx *Context) GetConfigDir() string {
+	ctx.Lock()
+	defer ctx.UnLock()
+	return ctx.ConfigDir
+}
+
+func NewContext() *Context {
+
+	// fetch from environment variables and set the global values related to locks.
+
+	return &Context{
+
+		IsSecure:      false,
+		CacheSize:     uint64(defaultCacheSize),
+		CacheDuration: objcache.DefaultExpiry,
+		MaxConn:       0,
+	}
+
+}
+
+func setGlobalsDebugFromEnv() bool {
+	debugEnv := os.Getenv("MINIO_DEBUG")
+	switch debugEnv {
+	case "lock":
+		globalDebugLock = true
+	case "mem":
+		globalDebugMemory = true
+	}
+	return globalDebugLock || globalDebugMemory
+}
+
+type Server struct {
+	// Mutex for atomic access of the struct fields.
+	sync.Mutex
+	// Object Layer for FS operations.
+	// Object Layer can be either FS or XL.
+	ObjectLayer ObjectLayer
+	// http handler with endpoints registered.
+	Mux *http.Handler
+	// InMemory lock used for FS operations.
+	NsMutex *nsLockMap
+	// All configuration values.
+	Context          *Context
+	ShutdownSignalCh chan shutdownSignal
+	// server config.
+	ServerConfig *serverConfigV7
+	// profiler interface.
+	Profiler profiler
+}
+
 type serverCmdConfig struct {
 	serverAddr   string
 	disks        []string
@@ -144,55 +222,8 @@ func finalizeEndpoints(tls bool, apiServer *http.Server) (endPoints []string) {
 	return endPoints
 }
 
-// initServerConfig initialize server config.
-func initServerConfig(c *cli.Context) {
-	// Create certs path.
-	err := createCertsPath()
-	fatalIf(err, "Unable to create \"certs\" directory.")
-
-	// Fetch max conn limit from environment variable.
-	if maxConnStr := os.Getenv("MINIO_MAXCONN"); maxConnStr != "" {
-		// We need to parse to its integer value.
-		globalMaxConn, err = strconv.Atoi(maxConnStr)
-		fatalIf(err, "Unable to convert MINIO_MAXCONN=%s environment variable into its integer value.", maxConnStr)
-	}
-
-	// Fetch max cache size from environment variable.
-	if maxCacheSizeStr := os.Getenv("MINIO_CACHE_SIZE"); maxCacheSizeStr != "" {
-		// We need to parse cache size to its integer value.
-		globalMaxCacheSize, err = strconvBytes(maxCacheSizeStr)
-		fatalIf(err, "Unable to convert MINIO_CACHE_SIZE=%s environment variable into its integer value.", maxCacheSizeStr)
-	}
-
-	// Fetch cache expiry from environment variable.
-	if cacheExpiryStr := os.Getenv("MINIO_CACHE_EXPIRY"); cacheExpiryStr != "" {
-		// We need to parse cache expiry to its time.Duration value.
-		globalCacheExpiry, err = time.ParseDuration(cacheExpiryStr)
-		fatalIf(err, "Unable to convert MINIO_CACHE_EXPIRY=%s environment variable into its time.Duration value.", cacheExpiryStr)
-	}
-
-	// Fetch access keys from environment variables if any and update the config.
-	accessKey := os.Getenv("MINIO_ACCESS_KEY")
-	secretKey := os.Getenv("MINIO_SECRET_KEY")
-
-	// Validate if both keys are specified and they are valid save them.
-	if accessKey != "" && secretKey != "" {
-		if !isValidAccessKey.MatchString(accessKey) {
-			fatalIf(errInvalidArgument, "Invalid access key.")
-		}
-		if !isValidSecretKey.MatchString(secretKey) {
-			fatalIf(errInvalidArgument, "Invalid secret key.")
-		}
-		// Set new credentials.
-		serverConfig.SetCredential(credential{
-			AccessKeyID:     accessKey,
-			SecretAccessKey: secretKey,
-		})
-		// Save new config.
-		err = serverConfig.Save()
-		fatalIf(err, "Unable to save config.")
-	}
-
+// increase the limits the for the max open files and memory allocation fpr a processs.
+func setServerLimits(c *cli.Context, ctx *Context) {
 	// Set maxOpenFiles, This is necessary since default operating
 	// system limits of 1024, 2048 are not enough for Minio server.
 	setMaxOpenFiles()
@@ -202,6 +233,37 @@ func initServerConfig(c *cli.Context) {
 	setMaxMemory()
 
 	// Do not fail if this is not allowed, lower limits are fine as well.
+}
+
+// obtain cache duration from ENV, if not set return the default expiry.
+func getCacheDuration() (time.Duration, error) {
+
+	// Fetch cache expiry from environment variable.
+	if cacheExpiryStr := os.Getenv("MINIO_CACHE_EXPIRY"); cacheExpiryStr != "" {
+		// We need to parse cache expiry to its time.Duration value.
+		return time.ParseDuration(cacheExpiryStr)
+	}
+	return objcache.DefaultExpiry, nil
+}
+
+// obtain cache size from environment variable, return default cache size if not set.
+func getCacheSize() (uint64, err) {
+	// Fetch max cache size from environment variable.
+	if maxCacheSizeStr := os.Getenv("MINIO_CACHE_SIZE"); maxCacheSizeStr != "" {
+		// We need to parse cache size to its integer value.
+		return strconvBytes(maxCacheSizeStr)
+	}
+	return uint64(defaultCacheSize), nil
+}
+
+func getMaxConn() (int, err) {
+
+	// Fetch max conn limit from environment variable.
+	if maxConnStr := os.Getenv("MINIO_MAXCONN"); maxConnStr != "" {
+		// We need to parse to its integer value.
+		return strconv.Atoi(maxConnStr)
+	}
+	return 0, nil
 }
 
 // Validate if input disks are sufficient for initializing XL.
@@ -329,20 +391,127 @@ func formatDisks(disks, ignoredDisks []string) error {
 	return nil
 }
 
+func getConfigDir(c *cli.Context) (string, error) {
+	return getConfigPath(c.GlobalString("config-dir"))
+}
+func initServer(c *cli.Context) {
+}
+
 // serverMain handler called for 'minio server' command.
 func serverMain(c *cli.Context) {
+
+	// obtain new context to store all the important settings of the server.
+	context := NewContext()
+
+	context.Lock()
+	defer context.Unlock()
+	// get minio config dir.
+	configDir, err := getConfigDir(c)
+	// abort on error.
+	fatalIf(err, "Unable to get minio config dir.")
+	context.ConfigDir = configDir
+
+	// Migrate any old version of config / state files to newer format.
+	migrate()
+
+	serverCtx := &Server{}
+	serverCtx.Lock()
+	defer serverCtx.Unlock()
+	// Initialize config.
+	config, err := initConfig(context)
+	fatalIf(err, "Unable to initialize minio config.")
+
+	serverCtx.ServerConfig = config
+
+	// Enable all loggers by now.
+	enableLoggers(config)
+
+	// Init the error tracing module.
+	initError()
+
+	// Set quiet flag.
+	isQuiet := c.Bool("quiet") || c.GlobalBool("quiet")
+
+	// Do not print update messages, if quiet flag is set.
+	if !isQuiet {
+		if strings.HasPrefix(Version, "RELEASE.") {
+			updateMsg, _, err := getReleaseUpdate(minioUpdateStableURL)
+			if err != nil {
+				// Ignore any errors during getReleaseUpdate() because
+				// the internet might not be available.
+				return nil
+			}
+			console.Println(updateMsg)
+		}
+	}
+
+	// Start profiler if env is set.
+	if profile := os.Getenv("MINIO_PROFILER"); profiler != "" {
+		serverCtx.Profiler = startProfiler(profiler)
+	}
 	// Check 'server' cli arguments.
 	checkServerSyntax(c)
+	// obtain the max connection.
+	maxConn, err := getMaxConn()
+	if err != nil {
+		fatalIf(err, "Unable to convert MINIO_MAXCONN=%s environment variable into its integer value.", os.Getenv("MINIO_MAXCONN"))
+	}
+	// Set the `MaxConn` field in the context.
+	context.MaxConn = maxConn
 
-	// Initialize server config.
-	initServerConfig(c)
+	// get cache size.
+	cacheSize, err := getCacheSize()
+	if err != nil {
+		fatalIf(err, "Unable to convert MINIO_CACHE_SIZE=%s environment variable into its integer value.", os.Getenv("MINIO_CACHE_SIZE"))
+	}
+	// set the cache size in the context.
+	context.CacheSize = cacheSize
+
+	// get cache duration.
+	cacheDuration, err := getCacheDuration()
+	if err != nil {
+		fatalIf(err, "Unable to convert MINIO_CACHE_EXPIRY=%s environment variable into its time.Duration value.", os.Getenv("MINIO_CACHE_EXPIRY"))
+	}
+	// set the cache duration in the context.
+	context.CacheDuration = cacheDuration
+
+	// Create certs path.
+	err := createCertsPath()
+	fatalIf(err, "Unable to create \"certs\" directory.")
+
+	// Fetch access keys from environment variables if any and update the config.
+	accessKey := os.Getenv("MINIO_ACCESS_KEY")
+	secretKey := os.Getenv("MINIO_SECRET_KEY")
+
+	// Validate if both keys are specified and they are valid save them.
+	if accessKey != "" && secretKey != "" {
+		if !isValidAccessKey.MatchString(accessKey) {
+			fatalIf(errInvalidArgument, "Invalid access key.")
+		}
+		if !isValidSecretKey.MatchString(secretKey) {
+			fatalIf(errInvalidArgument, "Invalid secret key.")
+		}
+		// Set new credentials.
+		serverCtx.ServerConfig.SetCredential(credential{
+			AccessKeyID:     accessKey,
+			SecretAccessKey: secretKey,
+		})
+		// Save new config.
+		err = serverCtx.ServerConfig.Save()
+		fatalIf(err, "Unable to save config.")
+	}
+
+	// increase the memoery and open file limits of the server.
+	setServerLimits()
 
 	// If https.
 	tls := isSSL()
 
+	context.IsSecure = tls
 	// Server address.
 	serverAddress := c.String("address")
 
+	context.ServerAddr = serverAddress
 	// Check if requested port is available.
 	port := getPort(serverAddress)
 	err := checkPortAvailability(port)

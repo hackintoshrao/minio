@@ -41,25 +41,6 @@ const (
 )
 
 var (
-	globalQuiet = false // Quiet flag set via command line
-	globalTrace = false // Trace flag set via environment setting.
-
-	globalDebug       = false // Debug flag set to print debug info.
-	globalDebugLock   = false // Lock debug info set via environment variable MINIO_DEBUG=lock .
-	globalDebugMemory = false // Memory debug info set via environment variable MINIO_DEBUG=mem
-	// Add new global flags here.
-
-	// Maximum connections handled per
-	// server, defaults to 0 (unlimited).
-	globalMaxConn = 0
-	// Maximum cache size.
-	globalMaxCacheSize = uint64(maxCacheSize)
-	// Cache expiry.
-	globalCacheExpiry = objcache.DefaultExpiry
-	// Add new variable global values here.
-)
-
-var (
 	// Limit fields size (except file) to 1Mib since Policy document
 	// can reach that size according to https://aws.amazon.com/articles/1434
 	maxFormFieldSize = int64(1024 * 1024)

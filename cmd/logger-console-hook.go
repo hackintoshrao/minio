@@ -29,7 +29,7 @@ type consoleLogger struct {
 }
 
 // enable console logger.
-func enableConsoleLogger() {
+func enableConsoleLogger(serverConfig *serverConfigV7) {
 	clogger := serverConfig.GetConsoleLogger()
 	if !clogger.Enable {
 		// Disable console logger if asked for.

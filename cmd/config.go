@@ -24,36 +24,24 @@ import (
 	"github.com/minio/go-homedir"
 )
 
-// configPath for custom config path only for testing purposes
-var customConfigPath string
-var configMu sync.Mutex
-
-// Sets a new config path.
-func setGlobalConfigPath(configPath string) {
-	configMu.Lock()
-	defer configMu.Unlock()
-	customConfigPath = configPath
-}
-
-// getConfigPath get server config path
-func getConfigPath() (string, error) {
-	configMu.Lock()
-	defer configMu.Unlock()
-
-	if customConfigPath != "" {
-		return customConfigPath, nil
+// getConfigPath get server config path.
+// if the configDir is an empty string return default config path.
+func getConfigPath(configDir string) (string, error) {
+	if configDir != "" {
+		return configDir, nil
 	}
+	// if the configDir is an empty string return default config path.
 	homeDir, err := homedir.Dir()
 	if err != nil {
 		return "", err
 	}
-	configPath := filepath.Join(homeDir, globalMinioConfigDir)
+	configDir = filepath.Join(homeDir, globalMinioConfigDir)
 	return configPath, nil
 }
 
 // mustGetConfigPath must get server config path.
-func mustGetConfigPath() string {
-	configPath, err := getConfigPath()
+func getDefaultConfigPath() string {
+	configPath, err := getConfigPath("")
 	if err != nil {
 		return ""
 	}
@@ -61,8 +49,8 @@ func mustGetConfigPath() string {
 }
 
 // createConfigPath create server config path.
-func createConfigPath() error {
-	configPath, err := getConfigPath()
+func createConfigPath(ctx *Context) error {
+	configPath := ctx.GetConfigDir()
 	if err != nil {
 		return err
 	}
@@ -70,8 +58,8 @@ func createConfigPath() error {
 }
 
 // isConfigFileExists - returns true if config file exists.
-func isConfigFileExists() bool {
-	path, err := getConfigFile()
+func isConfigFileExists(ctx *Context) bool {
+	path, err := getConfigFile(ctx)
 	if err != nil {
 		return false
 	}
@@ -83,18 +71,9 @@ func isConfigFileExists() bool {
 	return false
 }
 
-// mustGetConfigFile must get server config file.
-func mustGetConfigFile() string {
-	configFile, err := getConfigFile()
-	if err != nil {
-		return ""
-	}
-	return configFile
-}
-
 // getConfigFile get server config file.
-func getConfigFile() (string, error) {
-	configPath, err := getConfigPath()
+func getConfigFile(ctx *Context) (string, error) {
+	configPath := ctx.GetConfigDir()
 	if err != nil {
 		return "", err
 	}

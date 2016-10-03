@@ -42,8 +42,8 @@ type serverConfigV7 struct {
 }
 
 // initConfig - initialize server config. config version (called only once).
-func initConfig() error {
-	if !isConfigFileExists() {
+func initConfig(ctx *Context) (*serverConfigV7, error) {
+	if !isConfigFileExists(ctx) {
 		// Initialize server config.
 		srvCfg := &serverConfigV7{}
 		srvCfg.Version = globalMinioConfigVersion
@@ -66,44 +66,37 @@ func initConfig() error {
 		srvCfg.rwMutex = &sync.RWMutex{}
 
 		// Create config path.
-		err := createConfigPath()
+		err := createConfigPath(ctx)
 		if err != nil {
-			return err
+			return serverConfigV7{}, err
 		}
 
-		// Save the new config globally.
-		serverConfig = srvCfg
-
 		// Save config into file.
-		return serverConfig.Save()
+		return srvCfg, srvCfg.Save(ctx)
 	}
-	configFile, err := getConfigFile()
+
+	configFile, err := getConfigFile(ctx)
 	if err != nil {
-		return err
+		return serverConfigV7{}, err
 	}
 	if _, err = os.Stat(configFile); err != nil {
-		return err
+		return serverConfigV7{}, err
 	}
 	srvCfg := &serverConfigV7{}
 	srvCfg.Version = globalMinioConfigVersion
 	srvCfg.rwMutex = &sync.RWMutex{}
 	qc, err := quick.New(srvCfg)
 	if err != nil {
-		return err
+		return serverConfigV7{}, err
 	}
 	if err := qc.Load(configFile); err != nil {
-		return err
+		return serverConfigV7{}, err
 	}
-	// Save the loaded config globally.
-	serverConfig = srvCfg
 	// Set the version properly after the unmarshalled json is loaded.
-	serverConfig.Version = globalMinioConfigVersion
+	srvCfg.Version = globalMinioConfigVersion
 
-	return nil
+	return srvCfg, nil
 }
-
-// serverConfig server config.
-var serverConfig *serverConfigV7
 
 // GetVersion get current config version.
 func (s serverConfigV7) GetVersion() string {
@@ -242,12 +235,12 @@ func (s serverConfigV7) GetCredential() credential {
 }
 
 // Save config.
-func (s serverConfigV7) Save() error {
+func (s serverConfigV7) Save(ctx *Context) error {
 	s.rwMutex.RLock()
 	defer s.rwMutex.RUnlock()
 
 	// get config file.
-	configFile, err := getConfigFile()
+	configFile, err := getConfigFile(ctx)
 	if err != nil {
 		return err
 	}

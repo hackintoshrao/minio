@@ -33,7 +33,7 @@ type localFile struct {
 	*os.File
 }
 
-func enableFileLogger() {
+func enableFileLogger(serverConfig *serverConfigV7) {
 	flogger := serverConfig.GetFileLogger()
 	if !flogger.Enable || flogger.Filename == "" {
 		return

@@ -40,7 +40,7 @@ const (
 	uploadsJSONFile = "uploads.json"
 
 	// 8GiB cache by default.
-	maxCacheSize = 8 * 1024 * 1024 * 1024
+	defaultCacheSize = 8 * 1024 * 1024 * 1024
 
 	// Maximum erasure blocks.
 	maxErasureBlocks = 16
