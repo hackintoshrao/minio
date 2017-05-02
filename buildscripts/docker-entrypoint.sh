@@ -37,7 +37,17 @@ file_env() {
     fi
 }
 
-## Set env if necessary.
-file_env
+# MINIO_DCOS_DISTRIBUTED is the env variable is set when Minio is operating in distributed mode on 
+# Mesosphere DCOS.
+# minio-dcos-wrapper.sh finds the IP of Minio's containers and runs the Minio binary with 
+# arguments containing the Ip addresses of the containers.
+if [ -z "$MINIO_DCOS_DISTRIBUTED" ]
+	file_env
+	exec "$@"
+else 
+	/go/src/github.com/minio/minio/minio-dcos-wrapper.sh	
+fi
 
-exec "$@"
+dcos_env() {
+}
+## Set env if necessary.

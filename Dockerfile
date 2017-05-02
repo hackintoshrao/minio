@@ -7,7 +7,7 @@ ENV CGO_ENABLED 0
 WORKDIR /go/src/github.com/minio/
 
 RUN  \
-     apk add --no-cache ca-certificates && \
+     apk add --no-cache ca-certificates bind-tools jq bash curl && \
      apk add --no-cache --virtual .build-deps git go musl-dev && \
      go get -v -d github.com/minio/minio && \
      cd /go/src/github.com/minio/minio && \
